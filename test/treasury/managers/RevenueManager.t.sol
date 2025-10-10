@@ -36,7 +36,7 @@ contract RevenueManagerTest is FlaunchTest {
         // Deploy our platform
         _deployPlatform();
 
-        managerImplementation = address(new RevenueManager(address(treasuryManagerFactory)));
+        managerImplementation = address(new RevenueManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
         treasuryManagerFactory.approveManager(managerImplementation);
 
         // Deploy our {RevenueManager} implementation and initialize

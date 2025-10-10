@@ -37,7 +37,7 @@ contract ERC721OwnerFeeSplitManagerTest is FlaunchTest {
         erc3 = new ERC721Mock('ERC3', '3');
 
         managerImplementation = address(
-            new ERC721OwnerFeeSplitManager(address(treasuryManagerFactory))
+            new ERC721OwnerFeeSplitManager(address(treasuryManagerFactory), address(feeEscrowRegistry))
         );
 
         treasuryManagerFactory.approveManager(managerImplementation);

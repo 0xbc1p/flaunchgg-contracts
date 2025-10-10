@@ -21,10 +21,17 @@ import {TokenSupply} from '@flaunch/libraries/TokenSupply.sol';
 
 import {FlaunchTest} from '../FlaunchTest.sol';
 
+import {TrustedSignerFeeCalculator} from '@flaunch/fees/TrustedSignerFeeCalculator.sol';
+import {StaticFeeCalculator} from '@flaunch/fees/StaticFeeCalculator.sol';
+import {toBalanceDelta} from '@uniswap/v4-core/src/types/BalanceDelta.sol';
+
 
 contract FairLaunchTest is FlaunchTest {
 
     using PoolIdLibrary for PoolKey;
+
+    /// Store the `tx.origin` we expect in tests
+    address internal constant TX_ORIGIN = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
     PoolKey internal EXPECTED_POOL_KEY;
     PoolKey internal EXPECTED_FLIPPED_POOL_KEY;
@@ -723,6 +730,146 @@ contract FairLaunchTest is FlaunchTest {
         assertEq(fairLaunchInfo.endsAt, block.timestamp + _duration);
         assertEq(fairLaunchInfo.supply, supplyShare(50));
         assertEq(fairLaunchInfo.closed, false);
+    }
+
+    function test_CannotBypassFairLaunchCalculatorWithLargeBuy(
+        bool _validSignature,
+        bool _validWalletCap,
+        bool _validTxCap
+    ) public {
+        // Ensure that at least one of our fuzzed parameters is true
+        vm.assume(_validSignature || _validWalletCap || _validTxCap);
+
+        // Deploy the fee calculators
+        TrustedSignerFeeCalculator trustedSignerFeeCalculator = new TrustedSignerFeeCalculator(address(flETH));
+        trustedSignerFeeCalculator.grantRole(ProtocolRoles.POSITION_MANAGER, address(positionManager));
+        StaticFeeCalculator staticFeeCalculator = new StaticFeeCalculator();
+
+        // Set the fair launch calculator to TrustedSignerFeeCalculator
+        positionManager.setFairLaunchFeeCalculator(trustedSignerFeeCalculator);
+
+        // Set the post-fair launch calculator to StaticFeeCalculator
+        positionManager.setFeeCalculator(staticFeeCalculator);
+
+        // Create a signer and add it as a trusted signer for antibot protection
+        (address signer, uint signerPrivateKey) = makeAddrAndKey("trusted_signer");
+        trustedSignerFeeCalculator.addTrustedSigner(signer);
+
+        // Use smaller, more manageable amounts
+        uint fairLaunchSupply = 10e27;
+        uint walletCap = _validWalletCap ? 0 : 5e27;
+        uint txCap = _validTxCap ? 0 : 1e27;
+
+        // Flaunch the token with fair launch settings enabled
+        address memecoin = positionManager.flaunch(
+            PositionManager.FlaunchParams({
+                name: 'TestToken',
+                symbol: 'TEST',
+                tokenUri: 'https://token.gg/',
+                initialTokenFairLaunch: fairLaunchSupply,
+                fairLaunchDuration: 30 minutes,
+                premineAmount: 0,
+                creator: address(this),
+                creatorFeeAllocation: 0,
+                flaunchAt: 0,
+                initialPriceParams: abi.encode(1000e6),
+                feeCalculatorParams: abi.encode(true, walletCap, txCap)
+            })
+        );
+
+        // Get the pool key
+        PoolKey memory testPoolKey = positionManager.poolKey(memecoin);
+        PoolId testPoolId = testPoolKey.toId();
+
+        // Verify that fair launch settings are enabled
+        {
+            (bool enabled, uint returnedWalletCap, uint returnedTxCap) = trustedSignerFeeCalculator.fairLaunchSettings(testPoolId);
+            assertTrue(enabled, "Fair launch settings should be enabled");
+            assertEq(returnedWalletCap, walletCap, "Wallet cap should be set correctly");
+            assertEq(returnedTxCap, txCap, "Transaction cap should be set correctly");
+        }
+
+        // Generate a valid signature for the transaction
+        uint deadline = block.timestamp + 1 hours;
+        bytes memory signature = bytes('');
+        if (_validSignature) {
+            signature = _generateSignature(TX_ORIGIN, testPoolId, deadline, signerPrivateKey);
+        }
+
+        // Give this test contract some WETH to make the swap
+        deal(address(flETH), address(this), 1000e29);
+        flETH.approve(address(poolSwap), type(uint).max);
+        
+        // Also ensure the poolManager has enough flETH to handle the swap
+        deal(address(flETH), address(poolManager), 1000e29);
+
+        // In all cases, this swap should fail as it will fail at least one of the fuzzed parameters
+        if (!_validSignature) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    CustomRevert.WrappedError.selector,
+                    address(positionManager),
+                    IHooks.afterSwap.selector,
+                    abi.encodeWithSelector(TrustedSignerFeeCalculator.InvalidSigner.selector, address(0)),
+                    abi.encodeWithSelector(Hooks.HookCallFailed.selector)
+                )
+            );
+        } else if (!_validTxCap) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    CustomRevert.WrappedError.selector,
+                    address(positionManager),
+                    IHooks.afterSwap.selector,
+                    abi.encodeWithSelector(TrustedSignerFeeCalculator.TransactionCapExceeded.selector, 10e27 + 1, 1e27),
+                    abi.encodeWithSelector(Hooks.HookCallFailed.selector)
+                )
+            );
+        } else if (!_validWalletCap) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    CustomRevert.WrappedError.selector,
+                    address(positionManager),
+                    IHooks.afterSwap.selector,
+                    abi.encodeWithSelector(TrustedSignerFeeCalculator.TransactionCapExceeded.selector, 10e27 + 1, 5e27),
+                    abi.encodeWithSelector(Hooks.HookCallFailed.selector)
+                )
+            );
+        }
+
+        // Perform the actual swap with hook data that will fail the fair launch calculator
+        poolSwap.swap(
+            testPoolKey,
+            IPoolManager.SwapParams({
+                zeroForOne: true,
+                amountSpecified: int(fairLaunchSupply + 1), // Positive amount = exact tokens out
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            abi.encode(
+                address(0),
+                TrustedSignerFeeCalculator.SignedMessage({
+                    poolId: PoolId.unwrap(testPoolId),
+                    deadline: deadline,
+                    signature: signature
+                })
+            )
+        );
+    }
+
+    /**
+     * Generates a signature for a given wallet, poolId, deadline and private key.
+     * 
+     * @param _wallet The wallet to generate a signature for
+     * @param _poolId The pool id that this signature is valid for
+     * @param _deadline The deadline for the signature
+     * @param _privateKey The private key to use to generate the signature
+     *
+     * @return signature_ The encoded signature
+     */
+    function _generateSignature(address _wallet, PoolId _poolId, uint _deadline, uint _privateKey) internal pure returns (bytes memory signature_) {
+        bytes32 hash = keccak256(abi.encodePacked(_wallet, PoolId.unwrap(_poolId), _deadline));
+        bytes32 message = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(_privateKey, message); 
+        signature_ = abi.encodePacked(r, s, v);
     }
 
     function poolKey(bool _flipped) internal view returns (PoolKey memory) {

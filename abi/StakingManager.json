@@ -7,6 +7,11 @@
           "name": "_treasuryManagerFactory",
           "type": "address",
           "internalType": "address"
+        },
+        {
+          "name": "_feeEscrowRegistry",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "nonpayable"
@@ -257,6 +262,19 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "feeEscrowRegistry",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IFeeEscrowRegistry"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",

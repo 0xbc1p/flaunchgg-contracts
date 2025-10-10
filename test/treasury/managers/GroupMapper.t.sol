@@ -5,6 +5,7 @@ import {GroupMapper} from '@flaunch/treasury/managers/GroupMapper.sol';
 import {TreasuryManagerFactory} from '@flaunch/treasury/managers/TreasuryManagerFactory.sol';
 import {TreasuryManagerMock} from 'test/mocks/TreasuryManagerMock.sol';
 
+import {IFeeEscrowRegistry} from '@flaunch-interfaces/IFeeEscrowRegistry.sol';
 import {IManagerPermissions} from '@flaunch-interfaces/IManagerPermissions.sol';
 import {ITreasuryManager} from '@flaunch-interfaces/ITreasuryManager.sol';
 import {ITreasuryManagerFactory} from '@flaunch-interfaces/ITreasuryManagerFactory.sol';
@@ -29,7 +30,7 @@ contract GroupMapperTest is FlaunchTest {
         _deployPlatform();
 
         // Deploy the mock implementation and approve it in the {TreasuryManagerFactory}
-        managerMockImplementation = new TreasuryManagerMock(address(treasuryManagerFactory));    
+        managerMockImplementation = new TreasuryManagerMock(address(treasuryManagerFactory), address(feeEscrowRegistry));    
         treasuryManagerFactory.approveManager(address(managerMockImplementation));
         
         // Set up our managers with the `OWNER` as the `managerOwner` for both mocks
@@ -704,6 +705,7 @@ contract FeeMockManager is ITreasuryManager {
     }
     function permissions() external pure override returns (IManagerPermissions) { return IManagerPermissions(address(0)); }
     function setPermissions(address) external override {}
+    function feeEscrowRegistry() external pure override returns (IFeeEscrowRegistry) { return IFeeEscrowRegistry(address(0)); }
     receive() external payable {}
 }
 
@@ -720,5 +722,6 @@ contract NotValidCreatorMock is ITreasuryManager {
     function claim() external pure override returns (uint) { return 0; }
     function permissions() external pure override returns (IManagerPermissions) { return IManagerPermissions(address(0)); }
     function setPermissions(address) external override {}
+    function feeEscrowRegistry() external pure override returns (IFeeEscrowRegistry) { return IFeeEscrowRegistry(address(0)); }
     receive() external payable {}
 }

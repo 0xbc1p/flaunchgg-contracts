@@ -5,6 +5,7 @@ import {EnumerableSet} from '@openzeppelin/contracts/utils/structs/EnumerableSet
 
 import {PoolId} from '@uniswap/v4-core/src/types/PoolId.sol';
 
+import {ManagerFeeEscrow} from '@flaunch/libraries/ManagerFeeEscrow.sol';
 import {TreasuryManager} from '@flaunch/treasury/managers/TreasuryManager.sol';
 
 
@@ -79,8 +80,9 @@ contract RevenueManager is TreasuryManager {
      * Sets up the contract with the initial required contract addresses.
      *
      * @param _treasuryManagerFactory The {TreasuryManagerFactory} that will launch this implementation
+     * @param _feeEscrowRegistry The {FeeEscrowRegistry} that will be used to withdraw fees
      */
-    constructor (address _treasuryManagerFactory) TreasuryManager(_treasuryManagerFactory) {
+    constructor (address _treasuryManagerFactory, address _feeEscrowRegistry) TreasuryManager(_treasuryManagerFactory, _feeEscrowRegistry) {
         // ..
     }
 
@@ -123,8 +125,8 @@ contract RevenueManager is TreasuryManager {
         creator[address(_flaunchToken.flaunch)][_flaunchToken.tokenId] = _creator;
 
         // Capture the current `totalFeeAllocation` of the provided token
-        PoolId poolId = _flaunchToken.flaunch.poolId(_flaunchToken.tokenId);
-        _totalFeeAllocation[poolId] = treasuryManagerFactory.feeEscrow().totalFeesAllocated(poolId);
+        PoolId poolId = _getFlaunchTokenPoolId(_flaunchToken);
+        _totalFeeAllocation[poolId] = ManagerFeeEscrow.totalPoolFees(poolId);
 
         // Increment our internalId counter and set up our internal mappings
         ++_nextInternalId;
@@ -173,7 +175,7 @@ contract RevenueManager is TreasuryManager {
      */
     function balances(address _recipient) public view returns (uint balance_) {
         // Get the fees for the manager
-        uint managerFees = treasuryManagerFactory.feeEscrow().balances(address(this));
+        uint managerFees = ManagerFeeEscrow.feeEscrowBalance(address(this));
 
         // Get fees from positions held by the recepient
         for (uint i; i < _creatorTokens[_recipient].length(); ++i) {
@@ -182,7 +184,7 @@ contract RevenueManager is TreasuryManager {
 
             // Get the difference that the user can claim by finding the total fee allocation made
             // to this pool and reducing it by the cached internal total fee allocation.
-            uint newTotalFeeAllocation = treasuryManagerFactory.feeEscrow().totalFeesAllocated(poolId) - _totalFeeAllocation[poolId];
+            uint newTotalFeeAllocation = ManagerFeeEscrow.totalPoolFees(poolId) - _totalFeeAllocation[poolId];
             balance_ += newTotalFeeAllocation - getProtocolFee(newTotalFeeAllocation);
         }
 
@@ -204,7 +206,7 @@ contract RevenueManager is TreasuryManager {
     function claim() public returns (uint amount_) {
         // Withdraw fees earned from the held ERC721s, unwrapping into ETH. This will update
         // the `_protocolAvailableClaim` variable in the `receive` function callback.
-        treasuryManagerFactory.feeEscrow().withdrawFees(address(this), true);
+        _withdrawAllFees(address(this), true);
 
         // Get all of the tokens held by the sender (the stored creator of the token)
         for (uint i; i < _creatorTokens[msg.sender].length(); ++i) {
@@ -234,7 +236,7 @@ contract RevenueManager is TreasuryManager {
     function claim(FlaunchToken[] calldata _flaunchToken) public returns (uint amount_) {
         // Withdraw fees earned from the held ERC721s, unwrapping into ETH. This will update
         // the `_protocolAvailableClaim` variable in the `receive` function callback.
-        treasuryManagerFactory.feeEscrow().withdrawFees(address(this), true);
+        _withdrawAllFees(address(this), true);
 
         // Iterate over all FlaunchTokens passed to allow batch claims
         uint _flaunchTokenLength = _flaunchToken.length;
@@ -288,7 +290,7 @@ contract RevenueManager is TreasuryManager {
 
         // Get the difference that the user can claim by finding the total fee allocation made
         // to this pool and reducing it by the cached internal total fee allocation.
-        uint newTotalFeeAllocation = treasuryManagerFactory.feeEscrow().totalFeesAllocated(poolId);
+        uint newTotalFeeAllocation = ManagerFeeEscrow.totalPoolFees(poolId);
         creatorAvailableClaim_ = newTotalFeeAllocation - _totalFeeAllocation[poolId];
 
         // Update the cached total fee allocation

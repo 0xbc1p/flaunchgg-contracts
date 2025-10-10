@@ -4,6 +4,8 @@ pragma solidity ^0.8.26;
 import {ERC20Mock} from "test/tokens/ERC20Mock.sol";
 import {PoolId} from '@uniswap/v4-core/src/types/PoolId.sol';
 
+import {FeeEscrow} from '@flaunch/escrows/FeeEscrow.sol';
+import {FeeEscrowRegistry} from '@flaunch/escrows/FeeEscrowRegistry.sol';
 import {FeeSplitManager} from '@flaunch/treasury/managers/FeeSplitManager.sol';
 import {Flaunch} from '@flaunch/Flaunch.sol';
 import {PositionManager} from '@flaunch/PositionManager.sol';
@@ -46,7 +48,7 @@ contract StakingManagerTest is FlaunchTest {
         _deployPlatform();
 
         // Deploy and approve our staking manager implementation
-        managerImplementation = address(new StakingManager(address(treasuryManagerFactory)));
+        managerImplementation = address(new StakingManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
         treasuryManagerFactory.approveManager(managerImplementation);
 
         // Deploy our {StakingManager} implementation
@@ -340,8 +342,10 @@ contract StakingManagerTest is FlaunchTest {
      */
 
     function test_CanCreatorClaimSuccessfully() public {
+        // Allocate fees to the user
         _allocateFees(10 ether);
-        // trigger withdraw fees
+
+        // Trigger fees to withdraw
         _mintTokensToStake(1 wei);
         stakingManager.stake(1 wei);
 
@@ -534,41 +538,63 @@ contract StakingManagerTest is FlaunchTest {
      */
 
     function test_CanClaimSuccessfully() public {
+        // Mints 100 tokens to stake on the manager
         _mintTokensToStake(100 ether);
-        // First: stake 10 coins
+
+        // Stake 10 tokens
         stakingManager.stake(10 ether);
 
-        // distribute 10 ETH in fees
+        // Distribute 10 ETH in fees. The StakingManager is set up so that the creator gets 10%
+        // and then stakers get the remaining 90%.
         _allocateFees(10 ether);
 
-        // Second: stake 90 coins
+        // Stake an additional 90 tokens, which will give us 100 tokens in total
         stakingManager.stake(90 ether);
 
-        // distribute 90 ETH in fees
+        // Distribute an additional 90 ETH in fees, giving us 100 ETH in total
         _allocateFees(90 ether);
 
-        // jump to make position unlocked
+        // Jump to make position unlocked
         (, uint timelockedUntil, ,) = stakingManager.userPositions(address(this));
         vm.warp(timelockedUntil + 1);
         
-        // claim
+        // Find the current balance that we hold
         uint prevBalance = address(this).balance;
 
         vm.expectEmit();
         emit StakingManager.Claim(address(this), 90 ether - 2 wei);
+
+        // Confirm the balance we have for our staking user and owner
+        assertApproxEqAbs(stakingManager.balances(address(this)), 90 ether, 2 wei, 'Invalid balance for staking user');
+        assertApproxEqAbs(stakingManager.balances(owner), 10 ether, 2 wei,'Invalid balance for owner');
+
+        // Trigger a claim. The `owner` address will have 10% of the fees allocated as the creator of the
+        // Flaunched token. The remaining 10% should go to the test contract.
         stakingManager.claim();
 
-        // ensure that the user received 90 ether, after deducting the creator's share
+        // Ensure that the user received 90 ether, after deducting the creator's share
         assertApproxEqAbs(
             address(this).balance - prevBalance,
             90 ether,
             2 wei // allow error upto few wei
         );
 
+        // Confirm that the stake info no longer shows pending ETH rewards
         (, , uint pendingETHRewards) = stakingManager.getUserStakeInfo(address(this));
         assertEq(pendingETHRewards, 0);
+
+        // Confirm that the snapshot of the user position is now synced with the global snapshot
         (, , uint ethRewardsPerTokenSnapshotX128, ) = stakingManager.userPositions(address(this));
         assertEq(ethRewardsPerTokenSnapshotX128, stakingManager.globalEthRewardsPerTokenX128());
+
+        // We should now be able to make the claim as the owner
+        vm.startPrank(owner);
+
+        vm.expectEmit();
+        emit StakingManager.Claim(owner, 10 ether);
+        stakingManager.claim();
+
+        vm.stopPrank();
     }
 
     function test_CanMakeClaimAcrossMultipleSources() public freshManager {
@@ -968,6 +994,182 @@ contract StakingManagerTest is FlaunchTest {
         assertApproxEqAbs(stakerBalance, 27 ether, 3 wei);
         assertApproxEqAbs(ownerBalance, 1 ether, 1 wei);
         assertApproxEqAbs(owner2Balance, 2 ether, 1 wei);
+    }
+
+    function test_InvestigateClaimThreeIssue() public forkBaseBlock(36273176) {
+        // Deploy an updated FeeEscrowRegistry and add the existing FeeEscrow contract references
+        FeeEscrowRegistry feeEscrowRegistry = new FeeEscrowRegistry();
+        feeEscrowRegistry.addFeeEscrow(0x72e6f7948b1B1A343B477F39aAbd2E35E6D27dde, false);
+        feeEscrowRegistry.addFeeEscrow(0x51Bba15255406Cfe7099a42183302640ba7dAFDC, true);
+
+        // Define our two testing users
+        address user1 = 0xfE64bafe6663a3c76EB2A82F99740847B588190b;
+        address user2 = 0x498E93Bc04955fCBAC04BCF1a3BA792f01Dbaa96;
+
+        // Deploy the updated StakingManager
+        deployCodeTo('StakingManager.sol:StakingManager', abi.encode(0x48af8b28DDC5e5A86c4906212fc35Fa808CA8763, address(feeEscrowRegistry)), 0xc5EeC15Afb5aE342F6F8B1EcAAaCe5BeEA10d149);
+
+        stakingManager = StakingManager(payable(0xc5EeC15Afb5aE342F6F8B1EcAAaCe5BeEA10d149));
+
+        // Get some basic information around the StakingManager and check it's fee distribution
+        assertEq(stakingManager.managerFees(), 1694598456939686, 'managerFees');
+        assertEq(stakingManager.claimableOwnerFees(), 338919691387937, 'claimableOwnerFees');
+
+        // From V1 tokens, we cannot calculate the poolId so no creator fees can be taken
+        assertEq(stakingManager.pendingCreatorFees(user1), 0, 'pendingCreatorFees(user1)');
+        assertEq(stakingManager.pendingCreatorFees(user2), 0, 'pendingCreatorFees(user2)');
+
+        vm.startPrank(user1);
+
+        // Find the balance of our two testing users
+        uint balance1 = stakingManager.balances(user1);
+        uint balance2 = stakingManager.balances(user2);
+
+        assertEq(balance1, 1010066023437557, 'balance1');
+        assertEq(balance2, 1023452124890065, 'balance2');
+
+        // Find the stake balance of our two testing users
+        {
+            (uint tokensStaked1,, uint stakeBalance1) = stakingManager.getUserStakeInfo(user1);
+            (uint tokensStaked2,, uint stakeBalance2) = stakingManager.getUserStakeInfo(user2);
+
+            assertEq(tokensStaked1, 737778062136427780979805425, 'tokensStaked1');
+            assertEq(tokensStaked2, 500000000534573575222153652, 'tokensStaked2');
+
+            assertEq(stakeBalance1, 1010066023437557, 'stakeBalance1');
+            assertEq(stakeBalance2, 684532433502128, 'stakeBalance2');
+        }
+
+        // Make our claim and confirm the amount that was received. This claim is made as `user1`
+        stakingManager.claim();
+
+        // Check the balance after the claim
+        uint balance1After = stakingManager.balances(user1);
+        uint balance2After = stakingManager.balances(user2);
+
+        assertEq(balance1After, 0, 'balance1After');
+        assertEq(balance2After, 1023452124890065, 'balance2After');
+
+        // Check the stake balance after the claim
+        {
+            (uint tokensStaked1After,, uint stakeBalance1After) = stakingManager.getUserStakeInfo(user1);
+            (uint tokensStaked2After,, uint stakeBalance2After) = stakingManager.getUserStakeInfo(user2);
+
+            assertEq(tokensStaked1After, 737778062136427780979805425, 'tokensStaked1After');
+            assertEq(tokensStaked2After, 500000000534573575222153652, 'tokensStaked2After');
+
+            assertEq(stakeBalance1After, 0, 'stakeBalance1After');
+            assertEq(stakeBalance2After, 684532433502128, 'stakeBalance2After');
+        }
+
+        vm.stopPrank();
+
+        vm.startPrank(user2);
+
+        // Now make a claim as `user2`
+        stakingManager.claim();
+
+        // Check the balance after the claim
+        uint balance1After2 = stakingManager.balances(user1);
+        uint balance2After2 = stakingManager.balances(user2);
+
+        assertEq(balance1After2, 0, 'balance1After2');
+        assertEq(balance2After2, 0, 'balance2After2');
+
+        // Check the stake balance after the claim
+        {
+            (uint tokensStaked1After2,, uint stakeBalance1After2) = stakingManager.getUserStakeInfo(user1);
+            (uint tokensStaked2After2,, uint stakeBalance2After2) = stakingManager.getUserStakeInfo(user2);
+
+            assertEq(tokensStaked1After2, 737778062136427780979805425, 'tokensStaked1After2');
+            assertEq(tokensStaked2After2, 500000000534573575222153652, 'tokensStaked2After2');
+
+            assertEq(stakeBalance1After2, 0, 'stakeBalance1After2');
+            assertEq(stakeBalance2After2, 0, 'stakeBalance2After2');
+        }
+
+        vm.stopPrank();
+    }
+
+    function test_Receive_DifferentSources() public {
+        // Set up and define a range of FeeEscrow contracts
+        address LEGACY_FEE_ESCROW = address(new FeeEscrow(address(flETH), address(indexer)));
+        address MODERN_FEE_ESCROW = address(new FeeEscrow(address(flETH), address(indexer)));
+        address UNKNOWN_FEE_ESCROW = address(new FeeEscrow(address(flETH), address(indexer)));
+
+        // Create a new FeeEscrowRegistry with our test FeeEscrow contracts
+        feeEscrowRegistry = new FeeEscrowRegistry();
+        feeEscrowRegistry.addFeeEscrow(LEGACY_FEE_ESCROW, true);
+        feeEscrowRegistry.addFeeEscrow(MODERN_FEE_ESCROW, false);
+
+        // We need to deploy a new StakingManager with our test FeeEscrowRegistry
+        managerImplementation = address(new StakingManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
+        treasuryManagerFactory.approveManager(managerImplementation);
+
+        // Deploy our {StakingManager} implementation
+        vm.startPrank(owner);
+        address payable implementation = treasuryManagerFactory.deployManager(managerImplementation);
+        stakingManager = StakingManager(implementation);
+
+        // Create a memecoin and approve the manager to take it
+        tokenId = _createERC721(owner);
+        flaunch.approve(address(stakingManager), tokenId);
+
+        // Deploy a Token to stake for testing
+        stakingToken = new ERC20Mock(owner);
+
+        // Initialize a testing token.
+        // 60% split fees
+        // 30% creator share
+        // 10% owner share
+        stakingManager.initialize({
+            _owner: owner,
+            _data: abi.encode(
+                StakingManager.InitializeParams(
+                    address(stakingToken), minEscrowDuration, minStakeDuration, 30_00000, 10_00000
+                )
+            )
+        });
+
+        // deposit into the manager
+        stakingManager.deposit({
+            _flaunchToken: ITreasuryManager.FlaunchToken({
+                flaunch: flaunch,
+                tokenId: tokenId
+            }),
+            _creator: owner,
+            _data: ""
+        });
+        
+        vm.stopPrank();
+
+        // Provide our FeeEscrow contracts with some ETH
+        deal(LEGACY_FEE_ESCROW, 10 ether);
+        deal(MODERN_FEE_ESCROW, 10 ether);
+        deal(UNKNOWN_FEE_ESCROW, 10 ether);
+
+        // Make a deposit from each and calculate the expected fees distributed across the manager
+        vm.prank(LEGACY_FEE_ESCROW);
+        address(stakingManager).call{value: 10 ether}('');
+        
+        vm.prank(MODERN_FEE_ESCROW);
+        address(stakingManager).call{value: 10 ether}('');
+        
+        vm.prank(UNKNOWN_FEE_ESCROW);
+        address(stakingManager).call{value: 10 ether}('');
+
+        // Capture the stored fee amounts
+        uint splitFees = stakingManager.splitFees();
+        uint creatorFees = stakingManager.creatorFees();
+        uint ownerFees = stakingManager.claimableOwnerFees();
+
+        // Verify that the fees are correct
+        assertEq(splitFees, 24 ether, 'Incorrect split fees');
+        assertEq(creatorFees, 3 ether, 'Incorrect creator fees');
+        assertEq(ownerFees, 3 ether, 'Incorrect owner fees');
+
+        // Verify that the total fees are 30 ether
+        assertEq(splitFees + creatorFees + ownerFees, 30 ether, 'Total fees should be 30 ether');
     }
 
     /**

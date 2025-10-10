@@ -35,7 +35,7 @@ contract AddressFeeSplitManagerTest is FlaunchTest {
     function setUp() public {
         _deployPlatform();
 
-        managerImplementation = address(new AddressFeeSplitManager(address(treasuryManagerFactory)));
+        managerImplementation = address(new AddressFeeSplitManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
         treasuryManagerFactory.approveManager(managerImplementation);
     }
 

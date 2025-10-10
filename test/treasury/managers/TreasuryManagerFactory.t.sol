@@ -20,7 +20,7 @@ contract TreasuryManagerFactoryTest is FlaunchTest {
         _deployPlatform();
 
         // Deploy a mocked manager implementation
-        managerImplementation = address(new TreasuryManagerMock(address(treasuryManagerFactory)));
+        managerImplementation = address(new TreasuryManagerMock(address(treasuryManagerFactory), address(feeEscrowRegistry)));
 
         // Create some test data that we can pass
         data = abi.encode('Test initialization');

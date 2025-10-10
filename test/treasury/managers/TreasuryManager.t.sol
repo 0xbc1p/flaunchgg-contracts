@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+
+import {PoolId} from '@uniswap/v4-core/src/types/PoolId.sol';
+
+import {AddressFeeSplitManager} from '@flaunch/treasury/managers/AddressFeeSplitManager.sol';
 import {ClosedPermissions} from '@flaunch/treasury/permissions/Closed.sol';
 import {Flaunch} from '@flaunch/Flaunch.sol';
+import {FeeEscrow} from '@flaunch/escrows/FeeEscrow.sol';
+import {FeeEscrowRegistry} from '@flaunch/escrows/FeeEscrowRegistry.sol';
 import {PositionManager} from '@flaunch/PositionManager.sol';
 import {RevenueManager} from '@flaunch/treasury/managers/RevenueManager.sol';
+import {StakingManager} from '@flaunch/treasury/managers/StakingManager.sol';
 import {TreasuryManager} from '@flaunch/treasury/managers/TreasuryManager.sol';
 import {TreasuryManagerFactory} from '@flaunch/treasury/managers/TreasuryManagerFactory.sol';
 import {WhitelistedPermissions} from '@flaunch/treasury/permissions/Whitelisted.sol';
@@ -13,7 +21,6 @@ import {ITreasuryManager} from '@flaunch-interfaces/ITreasuryManager.sol';
 import {ITreasuryManagerFactory} from '@flaunch-interfaces/ITreasuryManagerFactory.sol';
 
 import {FlaunchTest} from 'test/FlaunchTest.sol';
-
 
 /**
  * Tests core TreasuryManager functionality, using the RevenueManager as an example.
@@ -34,7 +41,7 @@ contract TreasuryManagerTest is FlaunchTest {
         // Deploy our platform
         _deployPlatform();
 
-        address managerImplementation = address(new RevenueManager(address(treasuryManagerFactory)));
+        address managerImplementation = address(new RevenueManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
         treasuryManagerFactory.approveManager(managerImplementation);
 
         // Deploy our {RevenueManager} implementation and initialize
@@ -318,6 +325,130 @@ contract TreasuryManagerTest is FlaunchTest {
             _data: abi.encode('')
         });
         vm.stopPrank();
+    }
+
+    function test_CanClaimFeesFromMultipleFeeEscrows() public {
+        // Set up 4 mock fee escrows with different amounts
+        // 3 out of 4 should have fees, 1 should have 0
+        uint[] memory feeAmounts = new uint[](4);
+        feeAmounts[0] = 1 ether;    // 1 ETH
+        feeAmounts[1] = 2.5 ether;  // 2.5 ETH  
+        feeAmounts[2] = 0;          // 0 ETH (no fees)
+        feeAmounts[3] = 0.5 ether;  // 0.5 ETH
+        
+        // Expected total: 1 + 2.5 + 0 + 0.5 = 4 ETH
+        uint expectedTotal = 4 ether;
+        
+        // We need to provide sufficient flETH to the test contract to cover the total amount of fees
+        deal(address(flETH), expectedTotal);
+
+        // For this test, we remove the default {FeeEscrow} that is added to the {FeeEscrowRegistry}
+        vm.prank(feeEscrowRegistry.owner());
+        feeEscrowRegistry.removeFeeEscrow(address(feeEscrow));
+
+        // Deploy mock fee escrows
+        FeeEscrow[] memory mockEscrows = new FeeEscrow[](4);
+        for (uint i = 0; i < 4; ++i) {
+            mockEscrows[i] = new FeeEscrow(address(flETH), address(indexer));
+
+            // Mint flETH to the test contract that will be sent to the FeeEscrow
+            deal(address(flETH), address(this), feeAmounts[i]);
+            IERC20(address(flETH)).approve(address(mockEscrows[i]), feeAmounts[i]);
+
+            mockEscrows[i].allocateFees(
+                PoolId.wrap(bytes32('1')),  // The specific PoolId is not important
+                address(revenueManager),
+                feeAmounts[i]
+            );
+
+            // Add the escrow to the registry
+            vm.prank(feeEscrowRegistry.owner());
+            feeEscrowRegistry.addFeeEscrow(address(mockEscrows[i]), false);
+        }
+        
+        // Verify all escrows are registered
+        address[] memory registeredEscrows = feeEscrowRegistry.feeEscrows();
+        assertEq(registeredEscrows.length, 4);
+        
+        // The recipient will be our RevenueManager contract, so that we can make our claim call
+        address recipient = address(revenueManager);
+
+        // Call the test registry's withdrawFees function directly. It doesn't actually matter that we don't
+        // have any claim over any of the fees.
+        revenueManager.claim();
+    
+        // Verify that the RevenueManager withdrew the correct total amount
+        assertEq(payable(recipient).balance, expectedTotal);
+    }
+
+    function testFork_CanDepositAllFlaunchDeploymentsIntoGroups() public forkBaseBlock(35_957_070) {
+        // Deploy a new Staking Manager implementation
+        TreasuryManagerFactory treasuryManagerFactory = TreasuryManagerFactory(0x48af8b28DDC5e5A86c4906212fc35Fa808CA8763);
+
+        // Set up our AddressFeeSplitManager revenue split
+        AddressFeeSplitManager.RecipientShare[] memory recipientShares = new AddressFeeSplitManager.RecipientShare[](2);
+        recipientShares[0] = AddressFeeSplitManager.RecipientShare({recipient: address(1), share: 50_00000});
+        recipientShares[1] = AddressFeeSplitManager.RecipientShare({recipient: address(2), share: 50_00000});
+
+        vm.startPrank(treasuryManagerFactory.owner());
+        address addressManagerImplementation = address(new AddressFeeSplitManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
+        address revenueManagerImplementation = address(new RevenueManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
+        address stakingManagerImplementation = address(new StakingManager(address(treasuryManagerFactory), address(feeEscrowRegistry)));
+        treasuryManagerFactory.approveManager(addressManagerImplementation);
+        treasuryManagerFactory.approveManager(revenueManagerImplementation);
+        treasuryManagerFactory.approveManager(stakingManagerImplementation);
+        vm.stopPrank();
+
+        address payable addressManager = treasuryManagerFactory.deployAndInitializeManager(
+            addressManagerImplementation,
+            owner,
+            abi.encode(AddressFeeSplitManager.InitializeParams(20_00000, 0, recipientShares))
+        );
+
+        address payable revenueManager_ = treasuryManagerFactory.deployAndInitializeManager(
+            revenueManagerImplementation,
+            owner,
+            abi.encode(RevenueManager.InitializeParams(owner, 50_00))
+        );
+
+        address payable stakingManager = treasuryManagerFactory.deployAndInitializeManager(
+            stakingManagerImplementation,
+            owner,
+            abi.encode(StakingManager.InitializeParams(0xF1A7000000950C7ad8Aff13118Bb7aB561A448ee, 0, 0, 0, 0))
+        );
+
+        // Reference the new StakingManager contract
+        address[] memory managers = new address[](3);
+        managers[0] = addressManager;
+        managers[1] = revenueManager_;
+        managers[2] = stakingManager;
+
+        // Reference a Flaunch token from each iteration of their deployments
+        address[] memory flaunchContracts = new address[](4);
+        flaunchContracts[0] = address(0x6A53F8b799bE11a2A3264eF0bfF183dCB12d9571);
+        flaunchContracts[1] = address(0xB4512bf57d50fbcb64a3adF8b17a79b2A204C18C);
+        // flaunchContracts[2] = address(0x0cf6BdF0a85A9d6763361037985B76C8893553Af);
+        // flaunchContracts[3] = address(0x516af52D0c629B5E378DA4DC64Ecb0744cE10109);
+
+        // Loop through each of the flaunch tokens and deposit them into the manager
+        for (uint i = 0; i < managers.length; ++i) {
+            for (uint k = 0; k < flaunchContracts.length; ++k) {
+                // Check if we have commented out any of the Flaunch tokens and skip them to prevent false positives
+                if (flaunchContracts[k] == address(0)) continue;
+
+                // Reference a FlaunchToken to test with
+                ITreasuryManager.FlaunchToken memory flaunchToken = ITreasuryManager.FlaunchToken(Flaunch(flaunchContracts[k]), i + 1);
+
+                // Get the creator of the token so that we can prank them
+                address creator = flaunchToken.flaunch.ownerOf(flaunchToken.tokenId);
+
+                // Approve and deposit the token into the manager
+                vm.startPrank(creator);
+                flaunchToken.flaunch.approve(managers[i], flaunchToken.tokenId);
+                ITreasuryManager(managers[i]).deposit(flaunchToken, creator, abi.encode(''));
+                vm.stopPrank();
+            }
+        }
     }
 
     function _setPermissions(address _permissions) internal {

@@ -7,6 +7,7 @@ import {ReentrancyGuard} from '@solady/utils/ReentrancyGuard.sol';
 import {EnumerableSet} from '@openzeppelin/contracts/utils/structs/EnumerableSet.sol';
 import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
 import {MessageHashUtils} from '@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol';
+import {AccessControl} from '@openzeppelin/contracts/access/AccessControl.sol';
 
 import {BalanceDelta} from '@uniswap/v4-core/src/types/BalanceDelta.sol';
 import {Currency} from '@uniswap/v4-core/src/types/Currency.sol';
@@ -17,9 +18,9 @@ import {TickMath} from '@uniswap/v4-core/src/libraries/TickMath.sol';
 import {FullMath} from '@uniswap/v4-core/src/libraries/FullMath.sol';
 
 import {FairLaunch} from '@flaunch/hooks/FairLaunch.sol';
+import {ProtocolRoles} from '@flaunch/libraries/ProtocolRoles.sol';
 
 import {IFeeCalculator} from '@flaunch-interfaces/IFeeCalculator.sol';
-import {IMsgSender} from '@flaunch-interfaces/IMsgSender.sol';
 import {IMemecoin} from '@flaunch-interfaces/IMemecoin.sol';
 import {IPositionManager} from '@flaunch-interfaces/IPositionManager.sol';
 
@@ -29,7 +30,7 @@ import {IPositionManager} from '@flaunch-interfaces/IPositionManager.sol';
  * is assigned in the FeeDistribution struct, but also verifies that the transaction
  * is authorized by a trusted signer.
  */
-contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard {
+contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard, AccessControl {
 
     using EnumerableSet for EnumerableSet.AddressSet;
     using ECDSA for bytes32;
@@ -51,10 +52,23 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
     /**
      * This struct is used to store and represent the signed message.
      * 
+     * @param poolId The pool id that this signature is valid for
      * @param deadline The deadline of the signed message
      * @param signature The signature of the signed message
      */
     struct SignedMessage {
+        bytes32 poolId;
+        uint deadline;
+        bytes signature;
+    }
+
+    /**
+     * This struct is used to store and represent the signed message.
+     * 
+     * @param deadline The deadline of the signed message
+     * @param signature The signature of the signed message
+     */
+    struct PremineSignedMessage {
         uint deadline;
         bytes signature;
     }
@@ -106,18 +120,16 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
     /// The native token used by Flaunch
     address public immutable nativeToken;
 
-    /// The {PositionManager} contract address
-    address public immutable positionManager;
-
     /**
      * Registers the owner of the contract as the sender.
      *
      * @param _nativeToken The native token used by Flaunch
-     * @param _positionManager The {PositionManager} contract address
      */
-    constructor (address _nativeToken, address _positionManager) {
+    constructor (address _nativeToken) {
         nativeToken = _nativeToken;
-        positionManager = _positionManager;
+
+        // Set our caller to have the default admin of protocol roles
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         _initializeOwner(msg.sender);
     }
@@ -147,12 +159,7 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
      * @param _poolId The pool id of the flaunch
      * @param _params The parameters that were passed in to the flaunch
      */
-    function setFlaunchParams(PoolId _poolId, bytes calldata _params) external override {
-        // Ensure that this call is coming from the {PositionManager}
-        if (msg.sender != positionManager) {
-            revert CallerNotPositionManager();
-        }
-
+    function setFlaunchParams(PoolId _poolId, bytes calldata _params) external override onlyPositionManager {
         // Unpack the parameters. To avoid the `abi.decode` reverting, we ensure that the passed data is not empty
         bool enabled;
         uint walletCap;
@@ -188,8 +195,8 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
         BalanceDelta /* _delta */,
         bytes calldata _hookData
     ) public nonReentrant {
-        // Ensure that this call is coming from the {PositionManager}
-        if (msg.sender != positionManager) {
+        // Ensure that this call is coming from a {PositionManager} or the other calculator
+        if (!hasRole(ProtocolRoles.POSITION_MANAGER, msg.sender)) {
             revert CallerNotPositionManager();
         }
 
@@ -201,18 +208,10 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
             return;
         }
 
-        // Unpack our _hookData to find the signature. We bypass the initial `referrer` address.
-        (, SignedMessage memory signedMessage) = abi.decode(_hookData, (address, SignedMessage));
-
         // If the PoolKey is enabled and has a zero address signer, then we bypass the signature check
         TrustedPoolKeySigner memory _trustedPoolKeySigner = trustedPoolKeySigner[poolId];
         if (_trustedPoolKeySigner.enabled && _trustedPoolKeySigner.signer == address(0)) {
             return;
-        }
-
-        // Verify the deadline is not expired
-        if (block.timestamp > signedMessage.deadline) {
-            revert DeadlineExpired(signedMessage.deadline);
         }
 
         // We may be able to determine the sender from the router by using their `msgSender` wrapper, so lets
@@ -220,8 +219,12 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
         // function exists first.
         address origin = _determineOrigin(_sender);
 
-        // Create the message hash from the `origin`
-        bytes32 messageHash = keccak256(abi.encodePacked(origin, signedMessage.deadline));
+        // If we have a transient storage against the PoolId, then we are in a premine. For this reason, we
+        // can just verify against the origin and deadline, as we would not, at that point, know what the
+        // PoolId would be.
+        (bytes32 messageHash, bytes memory signature) = _isPremine(poolId, address(_poolKey.hooks))
+            ? _validatePremineSignature(origin, _hookData)
+            : _validateSignature(origin, poolId, _hookData);
 
         // Generate the message hash
         bytes32 ethSignedMessageHash = messageHash.toEthSignedMessageHash();
@@ -230,7 +233,7 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
         }
 
     	// Recover the signer and confirm that it is a trusted signer
-    	(address recoveredSigner,,) = ethSignedMessageHash.tryRecover(signedMessage.signature);
+        (address recoveredSigner,,) = ethSignedMessageHash.tryRecover(signature);
 
         // Check if the PoolKey has a specific non-zero address signer, then validate against this signer
         if (_trustedPoolKeySigner.enabled) {
@@ -428,7 +431,7 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
         }
 
         PoolId poolId = _poolKey.toId();
-        FairLaunch.FairLaunchInfo memory info = IPositionManager(positionManager).fairLaunch().fairLaunchInfo(poolId);
+        FairLaunch.FairLaunchInfo memory info = IPositionManager(address(_poolKey.hooks)).fairLaunch().fairLaunchInfo(poolId);
 
         // If we have a negative amount specified, then we have an ETH amount passed in and want
         // to buy as many tokens as we can for that price.
@@ -444,12 +447,6 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
         // are being purchased and need to calculate the amount of ETH required.
         else {
             tokensOut_ = uint(_amountSpecified);
-        }
-
-        // If the user has requested more tokens than are available in the fair launch, then we
-        // need to strip back the amount that we can fulfill.
-        if (tokensOut_ > info.supply) {
-            tokensOut_ = info.supply;
         }
     }
 
@@ -506,6 +503,80 @@ contract TrustedSignerFeeCalculator is IFeeCalculator, Ownable, ReentrancyGuard 
         if (success && data.length >= 32) {
             origin_ = abi.decode(data, (address));
         }
+    }
+
+    /**
+     * Helper function to check if the transaction is a premine.
+     *
+     * @param _poolId The PoolId that we are checking
+     * @param _positionManager The position manager of the pool
+     *
+     * @return isPremine_ If the transaction is a premine
+     */
+    function _isPremine(PoolId _poolId, address _positionManager) internal view returns (bool isPremine_) {
+        FairLaunch.FairLaunchInfo memory info = IPositionManager(_positionManager).fairLaunch().fairLaunchInfo(_poolId);
+        
+        // Check if we are in the fair launch window and if the fair launch starts at the current timestamp
+        isPremine_ = info.startsAt == block.timestamp && info.supply > 0;
+    }
+
+    /**
+     * Validates the signature of a standard post-fair launch transaction.
+     * 
+     * @param _origin The origin of the transaction
+     * @param _poolId The pool id of the swap
+     * @param _hookData The hook data of the swap
+     * 
+     * @return messageHash_ The message hash of the signature
+     * @return signature_ The signature of the message
+     */
+    function _validateSignature(address _origin, PoolId _poolId, bytes calldata _hookData) internal view returns (bytes32 messageHash_, bytes memory signature_) {
+        // Unpack our _hookData to find the signature. We bypass the initial `referrer` address.
+        (, SignedMessage memory signedMessage) = abi.decode(_hookData, (address, SignedMessage));
+
+        // Verify the deadline is not expired
+        if (block.timestamp > signedMessage.deadline) {
+            revert DeadlineExpired(signedMessage.deadline);
+        }
+
+        // Validate that the signed PoolId matches the actual PoolId being swapped against
+        bytes32 swapPoolId = PoolId.unwrap(_poolId);
+        if (signedMessage.poolId != swapPoolId) {
+            revert InvalidPoolKey();
+        }
+
+        messageHash_ = keccak256(abi.encodePacked(_origin, signedMessage.poolId, signedMessage.deadline));
+        signature_ = signedMessage.signature;
+    }
+
+    /**
+     * Validates the signature of a standard fair launch transaction.
+     * 
+     * @param _origin The origin of the transaction
+     * @param _hookData The hook data of the swap
+     * 
+     * @return messageHash_ The message hash of the signature
+     * @return signature_ The signature of the message
+     */
+    function _validatePremineSignature(address _origin, bytes calldata _hookData) internal view returns (bytes32 messageHash_, bytes memory signature_) {
+        // Unpack our _hookData to find the signature. We bypass the initial `referrer` address.
+        (, PremineSignedMessage memory signedMessage) = abi.decode(_hookData, (address, PremineSignedMessage));
+
+        // Verify the deadline is not expired
+        if (block.timestamp > signedMessage.deadline) {
+            revert DeadlineExpired(signedMessage.deadline);
+        }
+
+        messageHash_ = keccak256(abi.encodePacked(_origin, signedMessage.deadline));
+        signature_ = signedMessage.signature;
+    }
+
+    /**
+     * Ensures that only a {PositionManager} can call the function.
+     */
+    modifier onlyPositionManager {
+        if (!hasRole(ProtocolRoles.POSITION_MANAGER, msg.sender)) revert CallerNotPositionManager();
+        _;
     }
 
 }

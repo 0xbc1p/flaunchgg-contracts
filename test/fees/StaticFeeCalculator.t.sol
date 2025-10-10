@@ -38,11 +38,11 @@ contract StaticFeeCalculatorTest is FlaunchTest {
         assertEq(feeCalculator.determineSwapFee(_poolKey, _getSwapParams(int(_swapAmount)), _baseFee), _baseFee);
     }
 
-    function test_CanTrackSwap() public view {
+    function test_CanTrackSwap() public {
         _trackSwap();
     }
 
-    function _trackSwap() internal view {
+    function _trackSwap() internal {
         feeCalculator.trackSwap(
             address(1),
             _poolKey,

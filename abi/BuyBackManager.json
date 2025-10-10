@@ -12,6 +12,21 @@
           "name": "_feeEscrowRegistry",
           "type": "address",
           "internalType": "address"
+        },
+        {
+          "name": "_poolManager",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "_bidWall",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "_flETH",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "nonpayable"
@@ -61,25 +76,6 @@
     },
     {
       "type": "function",
-      "name": "amountClaimed",
-      "inputs": [
-        {
-          "name": "_recipient",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "_claimed",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "balances",
       "inputs": [
         {
@@ -93,6 +89,105 @@
           "name": "balance_",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "bidWall",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract BidWall"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "buyBack",
+      "inputs": [
+        {
+          "name": "_buyBackPoolKey",
+          "type": "tuple",
+          "internalType": "struct PoolKey",
+          "components": [
+            {
+              "name": "currency0",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "currency1",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "fee",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "tickSpacing",
+              "type": "int24",
+              "internalType": "int24"
+            },
+            {
+              "name": "hooks",
+              "type": "address",
+              "internalType": "contract IHooks"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "buyBackContract",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address payable"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "buyBackPoolKey",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "currency0",
+          "type": "address",
+          "internalType": "Currency"
+        },
+        {
+          "name": "currency1",
+          "type": "address",
+          "internalType": "Currency"
+        },
+        {
+          "name": "fee",
+          "type": "uint24",
+          "internalType": "uint24"
+        },
+        {
+          "name": "tickSpacing",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "hooks",
+          "type": "address",
+          "internalType": "contract IHooks"
         }
       ],
       "stateMutability": "view"
@@ -236,6 +331,19 @@
           "name": "",
           "type": "address",
           "internalType": "contract IFeeEscrowRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "flETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "Currency"
         }
       ],
       "stateMutability": "view"
@@ -548,6 +656,19 @@
     },
     {
       "type": "function",
+      "name": "poolManager",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract PoolManager"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "recipientShare",
       "inputs": [
         {
@@ -598,6 +719,19 @@
         }
       ],
       "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "routeBuyBack",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "availableFees_",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
       "stateMutability": "nonpayable"
     },
     {
@@ -769,19 +903,6 @@
     },
     {
       "type": "function",
-      "name": "transferRecipientShare",
-      "inputs": [
-        {
-          "name": "_newRecipient",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "treasuryManagerFactory",
       "inputs": [],
       "outputs": [
@@ -792,6 +913,38 @@
         }
       ],
       "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "unlockCallback",
+      "inputs": [
+        {
+          "name": "rawData",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "BidWallDeposit",
+      "inputs": [
+        {
+          "name": "_ethAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
     },
     {
       "type": "event",
@@ -864,7 +1017,7 @@
           "name": "_params",
           "type": "tuple",
           "indexed": false,
-          "internalType": "struct AddressFeeSplitManager.InitializeParams",
+          "internalType": "struct BuyBackManager.InitializeParams",
           "components": [
             {
               "name": "creatorShare",
@@ -877,19 +1030,34 @@
               "internalType": "uint256"
             },
             {
-              "name": "recipientShares",
-              "type": "tuple[]",
-              "internalType": "struct AddressFeeSplitManager.RecipientShare[]",
+              "name": "buyBackPoolKey",
+              "type": "tuple",
+              "internalType": "struct PoolKey",
               "components": [
                 {
-                  "name": "recipient",
+                  "name": "currency0",
                   "type": "address",
-                  "internalType": "address"
+                  "internalType": "Currency"
                 },
                 {
-                  "name": "share",
-                  "type": "uint256",
-                  "internalType": "uint256"
+                  "name": "currency1",
+                  "type": "address",
+                  "internalType": "Currency"
+                },
+                {
+                  "name": "fee",
+                  "type": "uint24",
+                  "internalType": "uint24"
+                },
+                {
+                  "name": "tickSpacing",
+                  "type": "int24",
+                  "internalType": "int24"
+                },
+                {
+                  "name": "hooks",
+                  "type": "address",
+                  "internalType": "contract IHooks"
                 }
               ]
             }
@@ -939,50 +1107,6 @@
           "type": "address",
           "indexed": false,
           "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "RecipientAdded",
-      "inputs": [
-        {
-          "name": "_recipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_share",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "RecipientShareTransferred",
-      "inputs": [
-        {
-          "name": "_oldRecipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_newRecipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_share",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -1110,7 +1234,7 @@
     },
     {
       "type": "error",
-      "name": "InsufficientSharesToTransfer",
+      "name": "InvalidCaller",
       "inputs": []
     },
     {
@@ -1135,7 +1259,17 @@
     },
     {
       "type": "error",
+      "name": "InvalidImplementation",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "InvalidOwnerShare",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidPoolKey",
       "inputs": []
     },
     {
@@ -1162,11 +1296,6 @@
     {
       "type": "error",
       "name": "InvalidShareTotal",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "InvalidShareTransferRecipient",
       "inputs": []
     },
     {

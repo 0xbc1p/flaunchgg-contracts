@@ -96,12 +96,12 @@
       "name": "trackSwap",
       "inputs": [
         {
-          "name": "",
+          "name": "_sender",
           "type": "address",
           "internalType": "address"
         },
         {
-          "name": "",
+          "name": "_poolKey",
           "type": "tuple",
           "internalType": "struct PoolKey",
           "components": [
@@ -133,7 +133,7 @@
           ]
         },
         {
-          "name": "",
+          "name": "_params",
           "type": "tuple",
           "internalType": "struct IPoolManager.SwapParams",
           "components": [
@@ -155,18 +155,18 @@
           ]
         },
         {
-          "name": "",
+          "name": "_delta",
           "type": "int256",
           "internalType": "BalanceDelta"
         },
         {
-          "name": "",
+          "name": "_hookData",
           "type": "bytes",
           "internalType": "bytes"
         }
       ],
       "outputs": [],
-      "stateMutability": "view"
+      "stateMutability": "nonpayable"
     }
   ]
 }

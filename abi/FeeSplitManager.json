@@ -1,22 +1,6 @@
 {
   "abi": [
     {
-      "type": "constructor",
-      "inputs": [
-        {
-          "name": "_treasuryManagerFactory",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "_feeEscrowRegistry",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
       "type": "receive",
       "stateMutability": "payable"
     },
@@ -61,25 +45,6 @@
     },
     {
       "type": "function",
-      "name": "amountClaimed",
-      "inputs": [
-        {
-          "name": "_recipient",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "_claimed",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "balances",
       "inputs": [
         {
@@ -90,7 +55,7 @@
       ],
       "outputs": [
         {
-          "name": "balance_",
+          "name": "",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -103,7 +68,7 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "",
+          "name": "amount_",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -769,19 +734,6 @@
     },
     {
       "type": "function",
-      "name": "transferRecipientShare",
-      "inputs": [
-        {
-          "name": "_newRecipient",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "treasuryManagerFactory",
       "inputs": [],
       "outputs": [
@@ -852,54 +804,6 @@
     },
     {
       "type": "event",
-      "name": "ManagerInitialized",
-      "inputs": [
-        {
-          "name": "_owner",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "_params",
-          "type": "tuple",
-          "indexed": false,
-          "internalType": "struct AddressFeeSplitManager.InitializeParams",
-          "components": [
-            {
-              "name": "creatorShare",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "ownerShare",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "recipientShares",
-              "type": "tuple[]",
-              "internalType": "struct AddressFeeSplitManager.RecipientShare[]",
-              "components": [
-                {
-                  "name": "recipient",
-                  "type": "address",
-                  "internalType": "address"
-                },
-                {
-                  "name": "share",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "ManagerOwnershipTransferred",
       "inputs": [
         {
@@ -939,69 +843,6 @@
           "type": "address",
           "indexed": false,
           "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "RecipientAdded",
-      "inputs": [
-        {
-          "name": "_recipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_share",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "RecipientShareTransferred",
-      "inputs": [
-        {
-          "name": "_oldRecipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_newRecipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_share",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "RevenueClaimed",
-      "inputs": [
-        {
-          "name": "_recipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "_amountClaimed",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -1110,11 +951,6 @@
     },
     {
       "type": "error",
-      "name": "InsufficientSharesToTransfer",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "InvalidClaimer",
       "inputs": []
     },
@@ -1162,11 +998,6 @@
     {
       "type": "error",
       "name": "InvalidShareTotal",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "InvalidShareTransferRecipient",
       "inputs": []
     },
     {

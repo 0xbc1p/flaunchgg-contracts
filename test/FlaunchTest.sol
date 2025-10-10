@@ -19,6 +19,7 @@ import {FairLaunch} from '@flaunch/hooks/FairLaunch.sol';
 import {FastFlaunchZap} from '@flaunch/zaps/FastFlaunchZap.sol';
 import {FeeDistributor} from '@flaunch/hooks/FeeDistributor.sol';
 import {FeeEscrow} from '@flaunch/escrows/FeeEscrow.sol';
+import {FeeEscrowRegistry} from '@flaunch/escrows/FeeEscrowRegistry.sol';
 import {FeeExemptions} from '@flaunch/hooks/FeeExemptions.sol';
 import {Flaunch} from '@flaunch/Flaunch.sol';
 import {AnyFlaunch} from '@flaunch/AnyFlaunch.sol';
@@ -78,6 +79,7 @@ contract FlaunchTest is Deployers {
     PoolModifyLiquidityTest internal poolModifyPosition;
     PoolSwap internal poolSwap;
     FeeEscrow internal feeEscrow;
+    FeeEscrowRegistry internal feeEscrowRegistry;
     PositionManagerMock internal positionManager;
     AnyPositionManagerMock internal anyPositionManager;
     FeeExemptions internal feeExemptions;
@@ -220,6 +222,10 @@ contract FlaunchTest is Deployers {
         positionManager.setReferralEscrow(payable(address(referralEscrow)));
         referralEscrow.grantRole(ProtocolRoles.POSITION_MANAGER, address(positionManager));
         referralEscrow.grantRole(ProtocolRoles.POSITION_MANAGER, address(anyPositionManager));
+
+        // Deploy the FeeEscrowRegistry
+        feeEscrowRegistry = new FeeEscrowRegistry();
+        feeEscrowRegistry.addFeeEscrow(address(feeEscrow), false);
 
         // Deploy our TreasuryManagerFactory and register our flaunch contract
         treasuryManagerFactory = new TreasuryManagerFactory(address(this), address(feeEscrow));
